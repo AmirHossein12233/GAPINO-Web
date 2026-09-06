@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Form, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 from pathlib import Path
 from datetime import datetime
@@ -20,6 +20,9 @@ from db import (
     db_update_user,
     db_get_messages,
     db_insert_message,
+    db_store_file,
+    db_get_file,
+    db_delete_file,
 )
 
 APP_NAME = "گپینو"
@@ -164,7 +167,19 @@ def find_user(username: str):
 
 
 def delete_avatar_file(avatar_url: str):
-    if not avatar_url or not avatar_url.startswith("/avatars/"):
+    if not avatar_url:
+        return
+
+    if DATABASE_ENABLED and avatar_url.startswith("/files/"):
+        file_id = Path(avatar_url[len("/files/"):]).name
+        if file_id:
+            try:
+                db_delete_file(file_id)
+            except Exception as exc:
+                print("[AVATAR DELETE DB ERROR]", repr(exc))
+        return
+
+    if not avatar_url.startswith("/avatars/"):
         return
     filename = Path(avatar_url[len("/avatars/"):]).name
     if not filename:
@@ -325,6 +340,23 @@ async def avatar_file(filename: str):
     return FileResponse(path)
 
 
+@app.get("/files/{file_id}")
+async def stored_file(file_id: str):
+    if DATABASE_ENABLED:
+        item = db_get_file(file_id)
+        if not item:
+            raise HTTPException(404, "فایل پیدا نشد.")
+        return Response(
+            content=item["data"],
+            media_type=item["content_type"],
+            headers={
+                "Content-Disposition": f'inline; filename="{item["original_name"]}"'
+            },
+        )
+
+    raise HTTPException(404, "فایل پیدا نشد.")
+
+
 @app.get("/me")
 async def me_endpoint(request: Request):
     user = get_current_user(request)
@@ -467,7 +499,8 @@ async def update_profile(request: Request):
             new_avatar = old_avatar
         else:
             new_avatar = str(avatar_value).strip()
-            if new_avatar and not new_avatar.startswith("/avatars/"):
+            valid_prefix = "/files/" if DATABASE_ENABLED else "/avatars/"
+            if new_avatar and not new_avatar.startswith(valid_prefix):
                 raise HTTPException(400, "آدرس عکس پروفایل نامعتبر است.")
 
         target["profile"] = {
@@ -506,8 +539,40 @@ async def upload_profile_avatar(request: Request, file: UploadFile = File(...)):
 
     extension = ALLOWED_AVATAR_TYPES[content_type]
     filename = secrets.token_hex(20) + extension
-    destination = AVATARS_DIR / filename
 
+    if DATABASE_ENABLED:
+        with file_lock:
+            users = load_users()
+            target = next((u for u in users if u.get("username") == current.get("username")), None)
+            if target is None:
+                raise HTTPException(404, "کاربر پیدا نشد.")
+
+            ensure_profile(target)
+            old_avatar = target["profile"].get("avatar", "")
+            file_id = db_store_file(
+                current["username"],
+                "avatar",
+                filename,
+                content_type,
+                content,
+            )
+            new_avatar = "/files/" + file_id
+            target["profile"]["avatar"] = new_avatar
+            db_upsert_user(target)
+
+            if old_avatar and old_avatar != new_avatar:
+                delete_avatar_file(old_avatar)
+
+            updated = public_user(target)
+
+        return {
+            "ok": True,
+            "avatar": new_avatar,
+            "profile": updated["profile"],
+            "user": updated,
+        }
+
+    destination = AVATARS_DIR / filename
     try:
         with destination.open("wb") as f:
             f.write(content)
@@ -529,10 +594,7 @@ async def upload_profile_avatar(request: Request, file: UploadFile = File(...)):
         ensure_profile(target)
         old_avatar = target["profile"].get("avatar", "")
         target["profile"]["avatar"] = new_avatar
-        if DATABASE_ENABLED:
-            db_upsert_user(target)
-        else:
-            save_json(USERS_FILE, users)
+        save_json(USERS_FILE, users)
 
         if old_avatar and old_avatar != new_avatar:
             delete_avatar_file(old_avatar)

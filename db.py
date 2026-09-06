@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
-
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DATABASE_ENABLED = bool(DATABASE_URL)
 
@@ -24,15 +23,9 @@ if DATABASE_ENABLED:
 def get_conn() -> Iterator[object]:
     if not DATABASE_ENABLED:
         raise RuntimeError("DATABASE_URL is not configured")
-
     import psycopg
     from psycopg.rows import dict_row
-
-    conn = psycopg.connect(
-        DATABASE_URL,
-        row_factory=dict_row,
-    )
-
+    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
     try:
         yield conn
         conn.commit()
@@ -46,328 +39,169 @@ def get_conn() -> Iterator[object]:
 def init_database() -> None:
     if not DATABASE_ENABLED:
         return
-
     with get_conn() as conn:
-        # ساخت جدول users در صورت نبودن
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS public.users (
-                username TEXT PRIMARY KEY,
-                password TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                display_name TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'سلام، من در گپینو هستم',
-                avatar TEXT NOT NULL DEFAULT ''
+        conn.execute("""
+            create table if not exists public.users (
+                username text primary key,
+                password text not null,
+                created_at text not null,
+                display_name text not null default '',
+                status text not null default 'سلام، من در گپینو هستم',
+                avatar text not null default ''
             )
-            """
-        )
+        """)
+        conn.execute("""
+            alter table public.users add column if not exists display_name text
+        """)
+        conn.execute("""
+            alter table public.users add column if not exists status text
+        """)
+        conn.execute("""
+            alter table public.users add column if not exists avatar text
+        """)
+        conn.execute("""
+            update public.users
+            set display_name = username
+            where display_name is null or display_name = ''
+        """)
+        conn.execute("""
+            update public.users
+            set status = 'سلام، من در گپینو هستم'
+            where status is null or status = ''
+        """)
+        conn.execute("""
+            update public.users
+            set avatar = ''
+            where avatar is null
+        """)
 
-        # مهم:
-        # اگر جدول قبلاً ساخته شده باشد، CREATE TABLE IF NOT EXISTS
-        # ستون‌های جدید را اضافه نمی‌کند.
-        # بنابراین ستون‌ها را صریحاً اضافه می‌کنیم.
-        conn.execute(
-            """
-            ALTER TABLE public.users
-            ADD COLUMN IF NOT EXISTS display_name TEXT
-            """
-        )
-
-        conn.execute(
-            """
-            ALTER TABLE public.users
-            ADD COLUMN IF NOT EXISTS status TEXT
-            """
-        )
-
-        conn.execute(
-            """
-            ALTER TABLE public.users
-            ADD COLUMN IF NOT EXISTS avatar TEXT
-            """
-        )
-
-        # پر کردن مقادیر NULL در داده‌های قدیمی
-        conn.execute(
-            """
-            UPDATE public.users
-            SET display_name = username
-            WHERE display_name IS NULL OR display_name = ''
-            """
-        )
-
-        conn.execute(
-            """
-            UPDATE public.users
-            SET status = 'سلام، من در گپینو هستم'
-            WHERE status IS NULL OR status = ''
-            """
-        )
-
-        conn.execute(
-            """
-            UPDATE public.users
-            SET avatar = ''
-            WHERE avatar IS NULL
-            """
-        )
-
-        # ساخت جدول پیام‌ها
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS public.messages (
-                id TEXT PRIMARY KEY,
-                sender TEXT NOT NULL,
-                receiver TEXT NOT NULL,
-                text TEXT NOT NULL,
-                created_at TEXT NOT NULL
+        conn.execute("""
+            create table if not exists public.file_blobs (
+                id text primary key,
+                owner text not null,
+                kind text not null,
+                original_name text not null,
+                content_type text not null,
+                size_bytes bigint not null,
+                data bytea not null,
+                created_at timestamptz not null default now()
             )
-            """
-        )
+        """)
 
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_messages_pair_time
-            ON public.messages(sender, receiver, created_at)
-            """
-        )
+        conn.execute("""
+            create index if not exists idx_file_blobs_owner
+            on public.file_blobs(owner)
+        """)
 
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_messages_created_at
-            ON public.messages(created_at)
-            """
-        )
+        conn.execute("""
+            create table if not exists public.messages (
+                id text primary key,
+                sender text not null,
+                receiver text not null,
+                text text not null,
+                created_at text not null
+            )
+        """)
+        conn.execute("""
+            create index if not exists idx_messages_pair_time
+            on public.messages(sender, receiver, created_at)
+        """)
+        conn.execute("""
+            create index if not exists idx_messages_created_at
+            on public.messages(created_at)
+        """)
 
 
 def _user_from_row(row: Optional[dict]) -> Optional[dict]:
     if not row:
         return None
-
     return {
         "username": row["username"],
         "password": row["password"],
-        "created_at": str(row["created_at"]),
+        "created_at": row["created_at"],
         "profile": {
-            "display_name": (
-                row.get("display_name")
-                or row["username"]
-            ),
-            "status": (
-                row.get("status")
-                or "سلام، من در گپینو هستم"
-            ),
+            "display_name": row.get("display_name") or row["username"],
+            "status": row.get("status") or "سلام، من در گپینو هستم",
             "avatar": row.get("avatar") or "",
         },
     }
 
 
 def db_get_user(username: str) -> Optional[dict]:
-    # برای اطمینان، قبل از Query ساختار DB بررسی می‌شود.
-    init_database()
-
     with get_conn() as conn:
         row = conn.execute(
-            """
-            SELECT
-                username,
-                password,
-                created_at,
-                display_name,
-                status,
-                avatar
-            FROM public.users
-            WHERE username = %s
-            """,
+            "select username,password,created_at,display_name,status,avatar from public.users where username=%s",
             (username,),
         ).fetchone()
-
     return _user_from_row(row)
 
 
 def db_list_users() -> list[dict]:
-    # برای اطمینان از وجود ستون‌های جدید
-    init_database()
-
     with get_conn() as conn:
         rows = conn.execute(
-            """
-            SELECT
-                username,
-                password,
-                created_at,
-                display_name,
-                status,
-                avatar
-            FROM public.users
-            ORDER BY created_at, username
-            """
+            "select username,password,created_at,display_name,status,avatar from public.users order by created_at, username"
         ).fetchall()
-
-    return [
-        _user_from_row(row)
-        for row in rows
-        if row
-    ]
+    return [_user_from_row(row) for row in rows]
 
 
 def db_upsert_user(user: dict) -> dict:
-    profile = (
-        user.get("profile")
-        if isinstance(user.get("profile"), dict)
-        else {}
-    )
-
-    username = str(
-        user.get("username", "")
-    ).strip()
-
+    profile = user.get("profile") if isinstance(user.get("profile"), dict) else {}
+    username = str(user.get("username", "")).strip()
     if not username:
         raise ValueError("username is required")
-
     payload = {
         "username": username,
-        "password": str(
-            user.get("password", "")
-        ),
-        "created_at": str(
-            user.get("created_at")
-            or datetime.now(timezone.utc).isoformat()
-        ),
-        "display_name": str(
-            profile.get("display_name")
-            or username
-        ),
-        "status": str(
-            profile.get("status")
-            or "سلام، من در گپینو هستم"
-        ),
-        "avatar": str(
-            profile.get("avatar")
-            or ""
-        ),
+        "password": str(user.get("password", "")),
+        "created_at": str(user.get("created_at") or datetime.now(timezone.utc).isoformat()),
+        "display_name": str(profile.get("display_name") or username),
+        "status": str(profile.get("status") or "سلام، من در گپینو هستم"),
+        "avatar": str(profile.get("avatar") or ""),
     }
-
-    init_database()
-
     with get_conn() as conn:
-        row = conn.execute(
-            """
-            INSERT INTO public.users
-            (
-                username,
-                password,
-                created_at,
-                display_name,
-                status,
-                avatar
-            )
-            VALUES
-            (
-                %(username)s,
-                %(password)s,
-                %(created_at)s,
-                %(display_name)s,
-                %(status)s,
-                %(avatar)s
-            )
-            ON CONFLICT (username)
-            DO UPDATE SET
-                password = EXCLUDED.password,
-                created_at = EXCLUDED.created_at,
-                display_name = EXCLUDED.display_name,
-                status = EXCLUDED.status,
-                avatar = EXCLUDED.avatar
-            RETURNING
-                username,
-                password,
-                created_at,
-                display_name,
-                status,
-                avatar
-            """,
-            payload,
-        ).fetchone()
-
+        row = conn.execute("""
+            insert into public.users (username,password,created_at,display_name,status,avatar)
+            values (%(username)s,%(password)s,%(created_at)s,%(display_name)s,%(status)s,%(avatar)s)
+            on conflict (username) do update set
+                password=excluded.password,
+                created_at=excluded.created_at,
+                display_name=excluded.display_name,
+                status=excluded.status,
+                avatar=excluded.avatar
+            returning username,password,created_at,display_name,status,avatar
+        """, payload).fetchone()
     return _user_from_row(row)
 
 
-def db_update_user(
-    username: str,
-    *,
-    status: Optional[str] = None,
-    profile: Optional[dict] = None,
-) -> Optional[dict]:
-
+def db_update_user(username: str, *, status: Optional[str] = None, profile: Optional[dict] = None) -> Optional[dict]:
     current = db_get_user(username)
-
     if not current:
         return None
-
     if profile is not None:
         current["profile"] = profile
-
     if status is not None:
         current["profile"]["status"] = status
-
     return db_upsert_user(current)
 
 
-def db_get_messages(
-    user1: Optional[str] = None,
-    user2: Optional[str] = None,
-) -> list[dict]:
-
-    init_database()
-
+def db_get_messages(user1: Optional[str] = None, user2: Optional[str] = None) -> list[dict]:
     with get_conn() as conn:
         if user1 is not None and user2 is not None:
-            rows = conn.execute(
-                """
-                SELECT
-                    id,
-                    sender,
-                    receiver,
-                    text,
-                    created_at
-                FROM public.messages
-                WHERE
-                    (sender = %s AND receiver = %s)
-                    OR
-                    (sender = %s AND receiver = %s)
-                ORDER BY created_at ASC
-                """,
-                (
-                    user1,
-                    user2,
-                    user2,
-                    user1,
-                ),
-            ).fetchall()
+            rows = conn.execute("""
+                select id,sender,receiver,text,created_at
+                from public.messages
+                where (sender=%s and receiver=%s) or (sender=%s and receiver=%s)
+                order by created_at asc
+            """, (user1, user2, user2, user1)).fetchall()
         else:
-            rows = conn.execute(
-                """
-                SELECT
-                    id,
-                    sender,
-                    receiver,
-                    text,
-                    created_at
-                FROM public.messages
-                ORDER BY created_at ASC
-                """
-            ).fetchall()
-
-    return [
-        dict(row)
-        for row in rows
-        if row
-    ]
+            rows = conn.execute("""
+                select id,sender,receiver,text,created_at
+                from public.messages
+                order by created_at asc
+            """).fetchall()
+    return [dict(row) for row in rows]
 
 
 def db_insert_message(message: dict) -> dict:
-    init_database()
-
     payload = {
         "id": str(message["id"]),
         "sender": str(message["sender"]),
@@ -375,105 +209,89 @@ def db_insert_message(message: dict) -> dict:
         "text": str(message["text"]),
         "created_at": str(message["created_at"]),
     }
-
     with get_conn() as conn:
-        row = conn.execute(
-            """
-            INSERT INTO public.messages
-            (
-                id,
-                sender,
-                receiver,
-                text,
-                created_at
-            )
-            VALUES
-            (
-                %(id)s,
-                %(sender)s,
-                %(receiver)s,
-                %(text)s,
-                %(created_at)s
-            )
-            ON CONFLICT (id)
-            DO NOTHING
-            RETURNING
-                id,
-                sender,
-                receiver,
-                text,
-                created_at
-            """,
-            payload,
-        ).fetchone()
-
+        row = conn.execute("""
+            insert into public.messages (id,sender,receiver,text,created_at)
+            values (%(id)s,%(sender)s,%(receiver)s,%(text)s,%(created_at)s)
+            on conflict (id) do nothing
+            returning id,sender,receiver,text,created_at
+        """, payload).fetchone()
     return dict(row) if row else payload
 
 
-def migrate_json_to_database(
-    users_file: Path,
-    messages_file: Path,
-) -> None:
-
+def migrate_json_to_database(users_file: Path, messages_file: Path) -> None:
     if not DATABASE_ENABLED:
         return
 
-    # اول ساخت/تکمیل ساختار DB
-    init_database()
-
     def read_json(path: Path, default):
         try:
-            with path.open(
-                "r",
-                encoding="utf-8",
-            ) as f:
+            with path.open("r", encoding="utf-8") as f:
                 value = json.load(f)
-
-            return (
-                value
-                if isinstance(value, type(default))
-                else default
-            )
-
-        except (
-            OSError,
-            json.JSONDecodeError,
-            TypeError,
-            ValueError,
-        ):
+            return value if isinstance(value, type(default)) else default
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
             return default
 
-    users = read_json(
-        users_file,
-        [],
-    )
-
-    messages = read_json(
-        messages_file,
-        [],
-    )
+    users = read_json(users_file, [])
+    messages = read_json(messages_file, [])
 
     if users:
         for user in users:
-            if (
-                isinstance(user, dict)
-                and user.get("username")
-            ):
+            if isinstance(user, dict) and user.get("username"):
+                # Preserve old JSON records while making them DB-backed.
                 db_upsert_user(user)
 
     if messages:
         for message in messages:
             if not isinstance(message, dict):
                 continue
-
-            if all(
-                message.get(key)
-                for key in (
-                    "id",
-                    "sender",
-                    "receiver",
-                    "text",
-                    "created_at",
-                )
-            ):
+            if all(message.get(k) for k in ("id", "sender", "receiver", "text", "created_at")):
                 db_insert_message(message)
+
+
+def db_store_file(owner: str, kind: str, original_name: str, content_type: str, data: bytes) -> str:
+    init_database()
+    import secrets
+    file_id = secrets.token_hex(20)
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO public.file_blobs
+                (id, owner, kind, original_name, content_type, size_bytes, data)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                file_id,
+                str(owner),
+                str(kind),
+                str(original_name),
+                str(content_type),
+                len(data),
+                data,
+            ),
+        )
+    return file_id
+
+
+def db_get_file(file_id: str) -> Optional[dict]:
+    init_database()
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT id, owner, kind, original_name, content_type, size_bytes, data, created_at
+            FROM public.file_blobs
+            WHERE id = %s
+            """,
+            (str(file_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def db_delete_file(file_id: str) -> None:
+    if not DATABASE_ENABLED or not file_id:
+        return
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM public.file_blobs WHERE id = %s",
+            (str(file_id),),
+        )
