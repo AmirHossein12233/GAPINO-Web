@@ -1,260 +1,205 @@
 import json
 import os
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-
-import psycopg
-from psycopg.types.json import Jsonb
+from typing import Iterator, Optional
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DATABASE_ENABLED = bool(DATABASE_URL)
 
 
-def enabled() -> bool:
-    return bool(DATABASE_URL)
+def _normalize_db_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://"):]
+    return url
 
 
-def connect():
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL is not configured.")
-    return psycopg.connect(DATABASE_URL, connect_timeout=10)
+if DATABASE_ENABLED:
+    DATABASE_URL = _normalize_db_url(DATABASE_URL)
 
 
-def init_db() -> None:
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    username TEXT PRIMARY KEY,
-                    password TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    profile JSONB NOT NULL DEFAULT '{}'::jsonb
-                )
-            """)
-            cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx "
-                "ON users (LOWER(username))"
-            )
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS messages (
-                    id TEXT PRIMARY KEY,
-                    sender TEXT NOT NULL,
-                    receiver TEXT NOT NULL,
-                    text TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )
-            """)
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS messages_sender_receiver_idx "
-                "ON messages (sender, receiver, created_at)"
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS messages_receiver_sender_idx "
-                "ON messages (receiver, sender, created_at)"
-            )
+@contextmanager
+def get_conn() -> Iterator[object]:
+    if not DATABASE_ENABLED:
+        raise RuntimeError("DATABASE_URL is not configured")
+    import psycopg
+    from psycopg.rows import dict_row
+    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    try:
+        yield conn
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
-def migrate_json_once(users_file: Path, messages_file: Path) -> None:
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM users")
-            users_count = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM messages")
-            messages_count = cur.fetchone()[0]
-
-            if users_count == 0 and users_file.exists():
-                try:
-                    users = json.loads(users_file.read_text(encoding="utf-8"))
-                except Exception:
-                    users = []
-                if isinstance(users, list):
-                    for user in users:
-                        if not isinstance(user, dict):
-                            continue
-                        username = str(user.get("username", "")).strip()
-                        password = str(user.get("password", ""))
-                        if not username or not password:
-                            continue
-                        profile = (
-                            user.get("profile")
-                            if isinstance(user.get("profile"), dict)
-                            else {}
-                        )
-                        profile.setdefault("display_name", username)
-                        profile.setdefault("status", "سلام، من در گپینو هستم")
-                        profile.setdefault("avatar", "")
-                        created_at = str(user.get("created_at", ""))
-                        cur.execute(
-                            """
-                            INSERT INTO users (username, password, created_at, profile)
-                            VALUES (%s, %s, %s, %s)
-                            ON CONFLICT (username) DO NOTHING
-                            """,
-                            (username, password, created_at, Jsonb(profile)),
-                        )
-
-            if messages_count == 0 and messages_file.exists():
-                try:
-                    messages = json.loads(messages_file.read_text(encoding="utf-8"))
-                except Exception:
-                    messages = []
-                if isinstance(messages, list):
-                    for message in messages:
-                        if not isinstance(message, dict):
-                            continue
-                        message_id = str(message.get("id", "")).strip()
-                        sender = str(message.get("sender", "")).strip()
-                        receiver = str(message.get("receiver", "")).strip()
-                        text = str(message.get("text", ""))
-                        created_at = str(message.get("created_at", ""))
-                        if not message_id or not sender or not receiver:
-                            continue
-                        cur.execute(
-                            """
-                            INSERT INTO messages (id, sender, receiver, text, created_at)
-                            VALUES (%s, %s, %s, %s, %s)
-                            ON CONFLICT (id) DO NOTHING
-                            """,
-                            (message_id, sender, receiver, text, created_at),
-                        )
-        conn.commit()
+def init_database() -> None:
+    if not DATABASE_ENABLED:
+        return
+    with get_conn() as conn:
+        conn.execute("""
+            create table if not exists public.users (
+                username text primary key,
+                password text not null,
+                created_at text not null,
+                display_name text not null default '',
+                status text not null default 'سلام، من در گپینو هستم',
+                avatar text not null default ''
+            )
+        """)
+        conn.execute("""
+            create table if not exists public.messages (
+                id text primary key,
+                sender text not null,
+                receiver text not null,
+                text text not null,
+                created_at text not null
+            )
+        """)
+        conn.execute("""
+            create index if not exists idx_messages_pair_time
+            on public.messages(sender, receiver, created_at)
+        """)
+        conn.execute("""
+            create index if not exists idx_messages_created_at
+            on public.messages(created_at)
+        """)
 
 
-def load_users() -> list[dict]:
-    with connect() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT username, password, created_at, profile FROM users ORDER BY username"
-        )
-        rows = cur.fetchall()
-    return [
-        {
-            "username": row[0],
-            "password": row[1],
-            "created_at": row[2],
-            "profile": row[3] if isinstance(row[3], dict) else {},
-        }
-        for row in rows
-    ]
-
-
-def find_user(username: str):
-    with connect() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT username, password, created_at, profile "
-            "FROM users WHERE LOWER(username)=LOWER(%s) LIMIT 1",
-            (username,),
-        )
-        row = cur.fetchone()
-    if row is None:
+def _user_from_row(row: Optional[dict]) -> Optional[dict]:
+    if not row:
         return None
     return {
-        "username": row[0],
-        "password": row[1],
-        "created_at": row[2],
-        "profile": row[3] if isinstance(row[3], dict) else {},
+        "username": row["username"],
+        "password": row["password"],
+        "created_at": row["created_at"],
+        "profile": {
+            "display_name": row.get("display_name") or row["username"],
+            "status": row.get("status") or "سلام، من در گپینو هستم",
+            "avatar": row.get("avatar") or "",
+        },
     }
 
 
-def insert_user(user: dict) -> None:
+def db_get_user(username: str) -> Optional[dict]:
+    with get_conn() as conn:
+        row = conn.execute(
+            "select username,password,created_at,display_name,status,avatar from public.users where username=%s",
+            (username,),
+        ).fetchone()
+    return _user_from_row(row)
+
+
+def db_list_users() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "select username,password,created_at,display_name,status,avatar from public.users order by created_at, username"
+        ).fetchall()
+    return [_user_from_row(row) for row in rows]
+
+
+def db_upsert_user(user: dict) -> dict:
     profile = user.get("profile") if isinstance(user.get("profile"), dict) else {}
-    with connect() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO users (username, password, created_at, profile)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (
-                user["username"],
-                user["password"],
-                user.get("created_at", ""),
-                Jsonb(profile),
-            ),
-        )
-        conn.commit()
+    username = str(user.get("username", "")).strip()
+    if not username:
+        raise ValueError("username is required")
+    payload = {
+        "username": username,
+        "password": str(user.get("password", "")),
+        "created_at": str(user.get("created_at") or datetime.now(timezone.utc).isoformat()),
+        "display_name": str(profile.get("display_name") or username),
+        "status": str(profile.get("status") or "سلام، من در گپینو هستم"),
+        "avatar": str(profile.get("avatar") or ""),
+    }
+    with get_conn() as conn:
+        row = conn.execute("""
+            insert into public.users (username,password,created_at,display_name,status,avatar)
+            values (%(username)s,%(password)s,%(created_at)s,%(display_name)s,%(status)s,%(avatar)s)
+            on conflict (username) do update set
+                password=excluded.password,
+                created_at=excluded.created_at,
+                display_name=excluded.display_name,
+                status=excluded.status,
+                avatar=excluded.avatar
+            returning username,password,created_at,display_name,status,avatar
+        """, payload).fetchone()
+    return _user_from_row(row)
 
 
-def update_user(username: str, *, password=None, created_at=None, profile=None) -> None:
-    fields = []
-    values = []
-    if password is not None:
-        fields.append("password=%s")
-        values.append(password)
-    if created_at is not None:
-        fields.append("created_at=%s")
-        values.append(created_at)
+def db_update_user(username: str, *, status: Optional[str] = None, profile: Optional[dict] = None) -> Optional[dict]:
+    current = db_get_user(username)
+    if not current:
+        return None
     if profile is not None:
-        fields.append("profile=%s")
-        values.append(Jsonb(profile))
-    if not fields:
+        current["profile"] = profile
+    if status is not None:
+        current["profile"]["status"] = status
+    return db_upsert_user(current)
+
+
+def db_get_messages(user1: Optional[str] = None, user2: Optional[str] = None) -> list[dict]:
+    with get_conn() as conn:
+        if user1 is not None and user2 is not None:
+            rows = conn.execute("""
+                select id,sender,receiver,text,created_at
+                from public.messages
+                where (sender=%s and receiver=%s) or (sender=%s and receiver=%s)
+                order by created_at asc
+            """, (user1, user2, user2, user1)).fetchall()
+        else:
+            rows = conn.execute("""
+                select id,sender,receiver,text,created_at
+                from public.messages
+                order by created_at asc
+            """).fetchall()
+    return [dict(row) for row in rows]
+
+
+def db_insert_message(message: dict) -> dict:
+    payload = {
+        "id": str(message["id"]),
+        "sender": str(message["sender"]),
+        "receiver": str(message["receiver"]),
+        "text": str(message["text"]),
+        "created_at": str(message["created_at"]),
+    }
+    with get_conn() as conn:
+        row = conn.execute("""
+            insert into public.messages (id,sender,receiver,text,created_at)
+            values (%(id)s,%(sender)s,%(receiver)s,%(text)s,%(created_at)s)
+            on conflict (id) do nothing
+            returning id,sender,receiver,text,created_at
+        """, payload).fetchone()
+    return dict(row) if row else payload
+
+
+def migrate_json_to_database(users_file: Path, messages_file: Path) -> None:
+    if not DATABASE_ENABLED:
         return
-    values.append(username)
-    with connect() as conn, conn.cursor() as cur:
-        cur.execute(
-            f"UPDATE users SET {', '.join(fields)} "
-            "WHERE LOWER(username)=LOWER(%s)",
-            values,
-        )
-        conn.commit()
 
+    def read_json(path: Path, default):
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                value = json.load(f)
+            return value if isinstance(value, type(default)) else default
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return default
 
-def load_messages() -> list[dict]:
-    with connect() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT id, sender, receiver, text, created_at "
-            "FROM messages ORDER BY created_at ASC"
-        )
-        rows = cur.fetchall()
-    return [
-        {
-            "id": row[0],
-            "sender": row[1],
-            "receiver": row[2],
-            "text": row[3],
-            "created_at": row[4],
-        }
-        for row in rows
-    ]
+    users = read_json(users_file, [])
+    messages = read_json(messages_file, [])
 
+    if users:
+        for user in users:
+            if isinstance(user, dict) and user.get("username"):
+                # Preserve old JSON records while making them DB-backed.
+                db_upsert_user(user)
 
-def get_private_messages(user1: str, user2: str) -> list[dict]:
-    with connect() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT id, sender, receiver, text, created_at
-            FROM messages
-            WHERE (sender=%s AND receiver=%s)
-               OR (sender=%s AND receiver=%s)
-            ORDER BY created_at ASC
-            """,
-            (user1, user2, user2, user1),
-        )
-        rows = cur.fetchall()
-    return [
-        {
-            "id": row[0],
-            "sender": row[1],
-            "receiver": row[2],
-            "text": row[3],
-            "created_at": row[4],
-        }
-        for row in rows
-    ]
-
-
-def insert_message(message: dict) -> bool:
-    with connect() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO messages (id, sender, receiver, text, created_at)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            (
-                message["id"],
-                message["sender"],
-                message["receiver"],
-                message["text"],
-                message["created_at"],
-            ),
-        )
-        conn.commit()
-        return cur.rowcount == 1
+    if messages:
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            if all(message.get(k) for k in ("id", "sender", "receiver", "text", "created_at")):
+                db_insert_message(message)

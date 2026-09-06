@@ -3,25 +3,24 @@ from fastapi.responses import HTMLResponse, FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from pathlib import Path
 from datetime import datetime
-
-from db import (
-    enabled as postgres_enabled,
-    init_db,
-    migrate_json_once,
-    load_users as db_load_users,
-    find_user as db_find_user,
-    insert_user as db_insert_user,
-    update_user as db_update_user,
-    load_messages as db_load_messages,
-    get_private_messages as db_get_private_messages,
-    insert_message as db_insert_message,
-)
 import hashlib
 import hmac
 import json
 import os
 import secrets
 import threading
+
+from db import (
+    DATABASE_ENABLED,
+    init_database,
+    migrate_json_to_database,
+    db_get_user,
+    db_list_users,
+    db_upsert_user,
+    db_update_user,
+    db_get_messages,
+    db_insert_message,
+)
 
 APP_NAME = "گپینو"
 BASE_DIR = Path(__file__).resolve().parent
@@ -53,12 +52,6 @@ app.add_middleware(
 )
 
 file_lock = threading.Lock()
-USE_POSTGRES = postgres_enabled()
-
-if USE_POSTGRES:
-    init_db()
-    migrate_json_once(USERS_FILE, MESSAGES_FILE)
-
 connections = {}
 connections_lock = threading.Lock()
 
@@ -82,15 +75,15 @@ def load_json(path: Path, default):
 
 
 def load_users():
-    if USE_POSTGRES:
-        return db_load_users()
+    if DATABASE_ENABLED:
+        return db_list_users()
     data = load_json(USERS_FILE, [])
     return data if isinstance(data, list) else []
 
 
 def load_messages():
-    if USE_POSTGRES:
-        return db_load_messages()
+    if DATABASE_ENABLED:
+        return db_get_messages()
     data = load_json(MESSAGES_FILE, [])
     return data if isinstance(data, list) else []
 
@@ -151,6 +144,9 @@ def get_current_user(request: Request):
     username = request.session.get("username")
     if not username:
         return None
+    if DATABASE_ENABLED:
+        user = db_get_user(username)
+        return ensure_profile(user) if user else None
     for user in load_users():
         if user.get("username") == username:
             return ensure_profile(user)
@@ -158,8 +154,9 @@ def get_current_user(request: Request):
 
 
 def find_user(username: str):
-    if USE_POSTGRES:
-        return db_find_user(username)
+    if DATABASE_ENABLED:
+        user = db_get_user(username)
+        return ensure_profile(user) if user else None
     for user in load_users():
         if user.get("username") == username:
             return user
@@ -181,8 +178,8 @@ def delete_avatar_file(avatar_url: str):
 
 
 def get_private_messages(user1: str, user2: str):
-    if USE_POSTGRES:
-        return db_get_private_messages(user1, user2)
+    if DATABASE_ENABLED:
+        return db_get_messages(user1, user2)
     result = []
     for message in load_messages():
         sender = message.get("sender")
@@ -196,6 +193,12 @@ if not USERS_FILE.exists():
     save_json(USERS_FILE, [])
 if not MESSAGES_FILE.exists():
     save_json(MESSAGES_FILE, [])
+
+
+# PostgreSQL startup and one-time/idempotent JSON migration.
+if DATABASE_ENABLED:
+    init_database()
+    migrate_json_to_database(USERS_FILE, MESSAGES_FILE)
 
 
 HTML = r'''<!DOCTYPE html>
@@ -354,8 +357,8 @@ async def register(username: str = Form(...), password: str = Form(...)):
                 "avatar": "",
             },
         }
-        if USE_POSTGRES:
-            db_insert_user(new_user)
+        if DATABASE_ENABLED:
+            db_upsert_user(new_user)
         else:
             users.append(new_user)
             save_json(USERS_FILE, users)
@@ -390,21 +393,21 @@ async def users_endpoint(request: Request):
 
     with file_lock:
         all_users = load_users()
-        changed_users = []
+        changed = False
         result = []
         for user in all_users:
-            before = json.dumps(user.get("profile", {}), ensure_ascii=False, sort_keys=True)
+            before = json.dumps(user, ensure_ascii=False, sort_keys=True)
             ensure_profile(user)
-            after = json.dumps(user.get("profile", {}), ensure_ascii=False, sort_keys=True)
-            if before != after:
-                changed_users.append(user)
+            after = json.dumps(user, ensure_ascii=False, sort_keys=True)
+            changed = changed or before != after
             if user.get("username") != current.get("username"):
                 result.append(public_user(user))
-        if USE_POSTGRES:
-            for user in changed_users:
-                db_update_user(user["username"], profile=user["profile"])
-        elif changed_users:
-            save_json(USERS_FILE, all_users)
+        if changed:
+            if DATABASE_ENABLED:
+                for user in all_users:
+                    db_upsert_user(user)
+            else:
+                save_json(USERS_FILE, all_users)
 
     return {"users": result}
 
@@ -416,18 +419,15 @@ async def get_profile(request: Request):
         raise HTTPException(401, "ابتدا وارد حساب شوید.")
 
     with file_lock:
-        user = find_user(current.get("username"))
-        if user is not None:
-            ensure_profile(user)
-            if USE_POSTGRES:
-                db_update_user(user["username"], profile=user["profile"])
-            else:
-                users = load_users()
-                for item in users:
-                    if item.get("username") == user.get("username"):
-                        item["profile"] = user["profile"]
-                save_json(USERS_FILE, users)
-            return {"profile": public_profile(user), "user": public_user(user)}
+        users = load_users()
+        for user in users:
+            if user.get("username") == current.get("username"):
+                ensure_profile(user)
+                if DATABASE_ENABLED:
+                    db_upsert_user(user)
+                else:
+                    save_json(USERS_FILE, users)
+                return {"profile": public_profile(user), "user": public_user(user)}
 
     raise HTTPException(404, "کاربر پیدا نشد.")
 
@@ -475,8 +475,8 @@ async def update_profile(request: Request):
             "status": status,
             "avatar": new_avatar,
         }
-        if USE_POSTGRES:
-            db_update_user(target["username"], profile=target["profile"])
+        if DATABASE_ENABLED:
+            db_upsert_user(target)
         else:
             save_json(USERS_FILE, users)
 
@@ -529,8 +529,8 @@ async def upload_profile_avatar(request: Request, file: UploadFile = File(...)):
         ensure_profile(target)
         old_avatar = target["profile"].get("avatar", "")
         target["profile"]["avatar"] = new_avatar
-        if USE_POSTGRES:
-            db_update_user(target["username"], profile=target["profile"])
+        if DATABASE_ENABLED:
+            db_upsert_user(target)
         else:
             save_json(USERS_FILE, users)
 
@@ -596,10 +596,10 @@ async def store_message(sender: str, receiver: str, text: str):
         "text": text,
         "created_at": now_text(),
     }
-    with file_lock:
-        if USE_POSTGRES:
-            db_insert_message(message)
-        else:
+    if DATABASE_ENABLED:
+        db_insert_message(message)
+    else:
+        with file_lock:
             messages = load_messages()
             messages.append(message)
             save_json(MESSAGES_FILE, messages[-10000:])
@@ -649,6 +649,9 @@ async def websocket_endpoint(websocket: WebSocket):
     with connections_lock:
         connections.setdefault(username, set()).add(websocket)
 
+    if DATABASE_ENABLED:
+        db_update_user(username, status="آنلاین")
+
     await broadcast_online_users()
 
     try:
@@ -697,6 +700,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 group.discard(websocket)
                 if not group:
                     connections.pop(username, None)
+        if DATABASE_ENABLED:
+            db_update_user(username, status="آفلاین")
         await broadcast_online_users()
 
 
