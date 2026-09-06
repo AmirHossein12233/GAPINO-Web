@@ -1,101 +1,116 @@
+# db.py - GAPINO DATABASE
+# PostgreSQL + Chat + Files + Live Streaming
+
 import json
 import os
-from contextlib import contextmanager
-from datetime import datetime, timezone
+import secrets
 from pathlib import Path
+from datetime import datetime, timezone
+from contextlib import contextmanager
 from typing import Iterator, Optional
 
 
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    ""
+).strip()
+
+
 DATABASE_ENABLED = bool(DATABASE_URL)
 
 
-def _normalize_db_url(url: str) -> str:
+def _normalize_db_url(url: str):
+
     if url.startswith("postgres://"):
+
         return "postgresql://" + url[len("postgres://"):]
+
     return url
 
 
+
 if DATABASE_ENABLED:
-    DATABASE_URL = _normalize_db_url(DATABASE_URL)
+
+    DATABASE_URL = _normalize_db_url(
+        DATABASE_URL
+    )
+
 
 
 @contextmanager
 def get_conn() -> Iterator[object]:
+
     if not DATABASE_ENABLED:
-        raise RuntimeError("DATABASE_URL is not configured")
+
+        raise RuntimeError(
+            "DATABASE_URL not configured"
+        )
+
 
     import psycopg
+
     from psycopg.rows import dict_row
+
 
     conn = psycopg.connect(
         DATABASE_URL,
         row_factory=dict_row
     )
 
+
     try:
+
         yield conn
+
         conn.commit()
+
+
     except Exception:
+
         conn.rollback()
+
         raise
+
+
     finally:
+
         conn.close()
 
+
+
+
+
+# ==============================
+# DATABASE INIT
+# ==============================
 
 
 def init_database():
 
     if not DATABASE_ENABLED:
+
         return
 
 
     with get_conn() as conn:
 
+
         # USERS
 
         conn.execute("""
-        CREATE TABLE IF NOT EXISTS public.users(
+        CREATE TABLE IF NOT EXISTS users (
+
             username TEXT PRIMARY KEY,
+
             password TEXT NOT NULL,
+
             created_at TEXT NOT NULL,
+
             display_name TEXT DEFAULT '',
-            status TEXT DEFAULT 'سلام، من در گپینو هستم',
+
+            status TEXT DEFAULT '',
+
             avatar TEXT DEFAULT ''
-        )
-        """)
-
-
-        conn.execute("""
-        ALTER TABLE public.users
-        ADD COLUMN IF NOT EXISTS display_name TEXT
-        """)
-
-        conn.execute("""
-        ALTER TABLE public.users
-        ADD COLUMN IF NOT EXISTS status TEXT
-        """)
-
-        conn.execute("""
-        ALTER TABLE public.users
-        ADD COLUMN IF NOT EXISTS avatar TEXT
-        """)
-
-
-
-        # FILE STORAGE
-
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS public.file_blobs(
-
-            id TEXT PRIMARY KEY,
-            owner TEXT NOT NULL,
-            kind TEXT NOT NULL,
-            original_name TEXT NOT NULL,
-            content_type TEXT NOT NULL,
-            size_bytes BIGINT NOT NULL,
-            data BYTEA NOT NULL,
-            created_at TIMESTAMPTZ DEFAULT now()
 
         )
         """)
@@ -104,18 +119,28 @@ def init_database():
 
         # MESSAGES
 
+
         conn.execute("""
-        CREATE TABLE IF NOT EXISTS public.messages(
+        CREATE TABLE IF NOT EXISTS messages (
 
             id TEXT PRIMARY KEY,
+
             sender TEXT NOT NULL,
+
             receiver TEXT NOT NULL,
-            text TEXT NOT NULL,
+
+            text TEXT DEFAULT '',
+
             created_at TEXT NOT NULL,
+
             file_id TEXT,
+
             file_name TEXT,
+
             file_type TEXT,
+
             file_url TEXT,
+
             file_size BIGINT
 
         )
@@ -123,285 +148,234 @@ def init_database():
 
 
 
-        # LIVE STREAM TABLE
+
+        # FILES
+
 
         conn.execute("""
-        CREATE TABLE IF NOT EXISTS public.live_rooms(
+        CREATE TABLE IF NOT EXISTS file_blobs (
 
             id TEXT PRIMARY KEY,
+
             owner TEXT NOT NULL,
-            title TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            status TEXT DEFAULT 'offline',
 
-            stream_key TEXT NOT NULL,
+            kind TEXT NOT NULL,
 
-            viewers INTEGER DEFAULT 0,
+            original_name TEXT NOT NULL,
 
-            created_at TIMESTAMPTZ DEFAULT now(),
+            content_type TEXT NOT NULL,
 
-            started_at TIMESTAMPTZ
+            size_bytes BIGINT,
+
+            data BYTEA NOT NULL,
+
+            created_at TIMESTAMP DEFAULT NOW()
 
         )
         """)
 
 
+
+        # LIVE STREAM
+
+
         conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_live_owner
-        ON public.live_rooms(owner)
+        CREATE TABLE IF NOT EXISTS live_streams (
+
+            id TEXT PRIMARY KEY,
+
+            owner TEXT NOT NULL,
+
+            title TEXT NOT NULL,
+
+            description TEXT DEFAULT '',
+
+            status TEXT DEFAULT 'created',
+
+            viewers INTEGER DEFAULT 0,
+
+            created_at TEXT NOT NULL,
+
+            started_at TEXT DEFAULT '',
+
+            ended_at TEXT DEFAULT ''
+
+        )
         """)
+
 
 
         conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_live_status
-        ON public.live_rooms(status)
-        """)
-
-
-
-        # LIVE VIEWERS
-
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS public.live_viewers(
-
-            id TEXT PRIMARY KEY,
-
-            live_id TEXT NOT NULL,
-
-            username TEXT NOT NULL,
-
-            joined_at TIMESTAMPTZ DEFAULT now()
-
-        )
-        """)
-
-
-
-        conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_live_viewers_room
-        ON public.live_viewers(live_id)
+        ON live_streams(status)
         """)
 
 
 
 
-def _user_from_row(row):
-
-    if not row:
-        return None
 
 
-    return {
-
-        "username": row["username"],
-
-        "password": row["password"],
-
-        "created_at": row["created_at"],
-
-        "profile": {
-
-            "display_name":
-                row.get("display_name")
-                or row["username"],
-
-
-            "status":
-                row.get("status")
-                or "سلام، من در گپینو هستم",
-
-
-            "avatar":
-                row.get("avatar")
-                or ""
-
-        }
-
-    }
-
+# ==============================
+# USERS
+# ==============================
 
 
 def db_get_user(username):
 
-    init_database()
-
     with get_conn() as conn:
 
         row = conn.execute(
+            """
+            SELECT *
+            FROM users
+            WHERE username=%s
+            """,
+            (username,)
+        ).fetchone()
+
+
+    return dict(row) if row else None
+
+
+
+
+
+def db_list_users():
+
+    with get_conn() as conn:
+
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM users
+            ORDER BY created_at
+            """
+        ).fetchall()
+
+
+    return [
+        dict(x)
+        for x in rows
+    ]
+
+
+
+
+
+def db_upsert_user(user):
+
+    profile = user.get(
+        "profile",
+        {}
+    )
+
+
+    with get_conn() as conn:
+
+        conn.execute(
         """
-        SELECT
+        INSERT INTO users
+        (
         username,
         password,
         created_at,
         display_name,
         status,
         avatar
+        )
 
-        FROM public.users
+        VALUES
+        (%s,%s,%s,%s,%s,%s)
 
-        WHERE username=%s
+
+        ON CONFLICT(username)
+        DO UPDATE SET
+
+        password=excluded.password,
+
+        display_name=excluded.display_name,
+
+        status=excluded.status,
+
+        avatar=excluded.avatar
+
         """,
-        (username,)
-        ).fetchone()
+        (
+
+        user["username"],
+
+        user["password"],
+
+        user["created_at"],
+
+        profile.get(
+            "display_name",
+            ""
+        ),
+
+        profile.get(
+            "status",
+            ""
+        ),
+
+        profile.get(
+            "avatar",
+            ""
+        )
+
+        ))
 
 
-    return _user_from_row(row)
-# =========================
-# LIVE STREAM DATABASE
-# =========================
-
-def init_live_database():
-    if not DATABASE_ENABLED:
-        return
-
-    with get_conn() as conn:
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS public.live_streams (
-                id TEXT PRIMARY KEY,
-                owner TEXT NOT NULL,
-                title TEXT NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'offline',
-                stream_key TEXT NOT NULL,
-                viewers INTEGER NOT NULL DEFAULT 0,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                started_at TIMESTAMPTZ
-            )
-        """)
-
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_live_owner
-            ON public.live_streams(owner)
-        """)
-
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_live_status
-            ON public.live_streams(status)
-        """)
 
 
-def db_create_live(
-    owner: str,
-    title: str,
-    description: str = ""
-) -> dict:
+    return user
+# ==============================
+# MESSAGES
+# ==============================
 
-    init_live_database()
 
-    import secrets
-
-    live_id = secrets.token_hex(12)
-    stream_key = secrets.token_hex(24)
+def db_get_messages(
+    user1=None,
+    user2=None
+):
 
     with get_conn() as conn:
-        row = conn.execute(
-            """
-            INSERT INTO public.live_streams
-            (
-                id,
-                owner,
-                title,
-                description,
-                status,
-                stream_key
-            )
-            VALUES
-            (
-                %s,
-                %s,
-                %s,
-                %s,
-                'offline',
-                %s
-            )
-            RETURNING *
-            """,
-            (
-                live_id,
-                owner,
-                title,
-                description,
-                stream_key,
-            ),
-        ).fetchone()
 
-    return dict(row)
+        if user1 and user2:
+
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM messages
+
+                WHERE
+                (sender=%s AND receiver=%s)
+
+                OR
+
+                (sender=%s AND receiver=%s)
+
+                ORDER BY created_at ASC
+                """,
+                (
+                    user1,
+                    user2,
+                    user2,
+                    user1
+                )
+            ).fetchall()
 
 
-def db_start_live(live_id: str):
+        else:
 
-    init_live_database()
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM messages
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
 
-    with get_conn() as conn:
-        row = conn.execute(
-            """
-            UPDATE public.live_streams
-            SET
-                status='live',
-                started_at=now()
-            WHERE id=%s
-            RETURNING *
-            """,
-            (live_id,),
-        ).fetchone()
-
-    return dict(row) if row else None
-
-
-
-def db_stop_live(live_id: str):
-
-    init_live_database()
-
-    with get_conn() as conn:
-        row = conn.execute(
-            """
-            UPDATE public.live_streams
-            SET
-                status='offline',
-                viewers=0
-            WHERE id=%s
-            RETURNING *
-            """,
-            (live_id,),
-        ).fetchone()
-
-    return dict(row) if row else None
-
-
-
-def db_get_live(live_id: str):
-
-    init_live_database()
-
-    with get_conn() as conn:
-        row = conn.execute(
-            """
-            SELECT *
-            FROM public.live_streams
-            WHERE id=%s
-            """,
-            (live_id,),
-        ).fetchone()
-
-    return dict(row) if row else None
-
-
-
-def db_get_active_lives():
-
-    init_live_database()
-
-    with get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM public.live_streams
-            WHERE status='live'
-            ORDER BY started_at DESC
-            """
-        ).fetchall()
 
     return [
         dict(row)
@@ -410,37 +384,464 @@ def db_get_active_lives():
 
 
 
-def db_update_live_viewers(
-    live_id: str,
-    viewers: int
+
+
+def db_insert_message(message):
+
+    with get_conn() as conn:
+
+        conn.execute(
+        """
+        INSERT INTO messages
+
+        (
+        id,
+        sender,
+        receiver,
+        text,
+        created_at,
+        file_id,
+        file_name,
+        file_type,
+        file_url,
+        file_size
+        )
+
+        VALUES
+
+        (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+
+        ON CONFLICT(id)
+        DO NOTHING
+
+        """,
+
+        (
+
+        message["id"],
+
+        message["sender"],
+
+        message["receiver"],
+
+        message.get(
+            "text",
+            ""
+        ),
+
+        message["created_at"],
+
+        message.get(
+            "file_id"
+        ),
+
+        message.get(
+            "file_name"
+        ),
+
+        message.get(
+            "file_type"
+        ),
+
+        message.get(
+            "file_url"
+        ),
+
+        message.get(
+            "file_size"
+        )
+
+        ))
+
+
+    return message
+
+
+
+
+
+
+# ==============================
+# FILE STORAGE
+# ==============================
+
+
+def db_store_file(
+    owner,
+    kind,
+    original_name,
+    content_type,
+    data
 ):
 
-    init_live_database()
+    file_id = secrets.token_hex(20)
+
 
     with get_conn() as conn:
+
         conn.execute(
-            """
-            UPDATE public.live_streams
-            SET viewers=%s
-            WHERE id=%s
-            """,
-            (
-                int(viewers),
-                live_id,
-            ),
+        """
+        INSERT INTO file_blobs
+
+        (
+        id,
+        owner,
+        kind,
+        original_name,
+        content_type,
+        size_bytes,
+        data
+        )
+
+        VALUES
+        (%s,%s,%s,%s,%s,%s,%s)
+
+        """,
+
+        (
+
+        file_id,
+
+        owner,
+
+        kind,
+
+        original_name,
+
+        content_type,
+
+        len(data),
+
+        data
+
+        ))
+
+
+    return file_id
+
+
+
+
+
+def db_get_file(file_id):
+
+    with get_conn() as conn:
+
+        row = conn.execute(
+        """
+        SELECT *
+        FROM file_blobs
+
+        WHERE id=%s
+        """,
+        (file_id,)
+        ).fetchone()
+
+
+    return dict(row) if row else None
+
+
+
+
+
+def db_delete_file(file_id):
+
+    with get_conn() as conn:
+
+        conn.execute(
+        """
+        DELETE FROM file_blobs
+
+        WHERE id=%s
+        """,
+        (file_id,)
         )
 
 
 
-def db_delete_live(live_id: str):
 
-    init_live_database()
+
+
+# ==============================
+# GAPINO LIVE STREAM
+# ==============================
+
+
+def db_create_live(
+    owner,
+    title,
+    description=""
+):
+
+    live_id = secrets.token_hex(12)
+
+
+    now = datetime.now(
+        timezone.utc
+    ).isoformat()
+
+
 
     with get_conn() as conn:
+
         conn.execute(
-            """
-            DELETE FROM public.live_streams
-            WHERE id=%s
-            """,
-            (live_id,),
+        """
+        INSERT INTO live_streams
+
+        (
+        id,
+        owner,
+        title,
+        description,
+        status,
+        created_at
         )
+
+        VALUES
+
+        (%s,%s,%s,%s,%s,%s)
+
+        """,
+
+        (
+
+        live_id,
+
+        owner,
+
+        title,
+
+        description,
+
+        "created",
+
+        now
+
+        ))
+
+
+
+    return {
+
+        "id": live_id,
+
+        "owner": owner,
+
+        "title": title,
+
+        "status": "created"
+
+    }
+
+
+
+
+
+
+
+def db_start_live(
+    live_id
+):
+
+    now = datetime.now(
+        timezone.utc
+    ).isoformat()
+
+
+    with get_conn() as conn:
+
+        conn.execute(
+        """
+        UPDATE live_streams
+
+        SET
+
+        status='live',
+
+        started_at=%s
+
+        WHERE id=%s
+
+        """,
+
+        (
+            now,
+            live_id
+        ))
+
+
+    return True
+
+
+
+
+
+
+def db_stop_live(
+    live_id
+):
+
+    now = datetime.now(
+        timezone.utc
+    ).isoformat()
+
+
+    with get_conn() as conn:
+
+        conn.execute(
+        """
+        UPDATE live_streams
+
+        SET
+
+        status='ended',
+
+        ended_at=%s
+
+        WHERE id=%s
+
+        """,
+
+        (
+            now,
+            live_id
+        ))
+
+
+    return True
+
+
+
+
+
+
+def db_get_live(
+    live_id
+):
+
+    with get_conn() as conn:
+
+        row = conn.execute(
+        """
+        SELECT *
+
+        FROM live_streams
+
+        WHERE id=%s
+
+        """,
+
+        (
+            live_id,
+        )
+
+        ).fetchone()
+
+
+    return dict(row) if row else None
+
+
+
+
+
+
+def db_list_live():
+
+    with get_conn() as conn:
+
+        rows = conn.execute(
+        """
+        SELECT *
+
+        FROM live_streams
+
+        WHERE status='live'
+
+        ORDER BY created_at DESC
+
+        """
+        ).fetchall()
+
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+
+
+
+
+
+# ==============================
+# JSON MIGRATION
+# ==============================
+
+
+def migrate_json_to_database(
+    users_file: Path,
+    messages_file: Path
+):
+
+    if not DATABASE_ENABLED:
+
+        return
+
+
+
+    try:
+
+        with users_file.open(
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            users = json.load(f)
+
+
+    except Exception:
+
+        users = []
+
+
+
+    for user in users:
+
+        if isinstance(user, dict):
+
+            if user.get("username"):
+
+                db_upsert_user(
+                    user
+                )
+
+
+
+
+    try:
+
+        with messages_file.open(
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            messages=json.load(f)
+
+
+    except Exception:
+
+        messages=[]
+
+
+
+
+    for msg in messages:
+
+        if isinstance(msg,dict):
+
+            if msg.get("id"):
+
+                db_insert_message(
+                    msg
+                )
