@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
+
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DATABASE_ENABLED = bool(DATABASE_URL)
 
@@ -23,296 +24,761 @@ if DATABASE_ENABLED:
 def get_conn() -> Iterator[object]:
     if not DATABASE_ENABLED:
         raise RuntimeError("DATABASE_URL is not configured")
+
     import psycopg
     from psycopg.rows import dict_row
-    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+
+    conn = psycopg.connect(
+        DATABASE_URL,
+        row_factory=dict_row
+    )
+
     try:
         yield conn
         conn.commit()
+
     except Exception:
         conn.rollback()
         raise
+
     finally:
         conn.close()
 
 
+
 def init_database() -> None:
+
     if not DATABASE_ENABLED:
         return
+
+
     with get_conn() as conn:
-        conn.execute("""
-            create table if not exists public.users (
-                username text primary key,
-                password text not null,
-                created_at text not null,
-                display_name text not null default '',
-                status text not null default 'سلام، من در گپینو هستم',
-                avatar text not null default ''
-            )
-        """)
-        conn.execute("""
-            alter table public.users add column if not exists display_name text
-        """)
-        conn.execute("""
-            alter table public.users add column if not exists status text
-        """)
-        conn.execute("""
-            alter table public.users add column if not exists avatar text
-        """)
-        conn.execute("""
-            update public.users
-            set display_name = username
-            where display_name is null or display_name = ''
-        """)
-        conn.execute("""
-            update public.users
-            set status = 'سلام، من در گپینو هستم'
-            where status is null or status = ''
-        """)
-        conn.execute("""
-            update public.users
-            set avatar = ''
-            where avatar is null
-        """)
 
+        # کاربران
         conn.execute("""
-            create table if not exists public.file_blobs (
-                id text primary key,
-                owner text not null,
-                kind text not null,
-                original_name text not null,
-                content_type text not null,
-                size_bytes bigint not null,
-                data bytea not null,
-                created_at timestamptz not null default now()
+            CREATE TABLE IF NOT EXISTS public.users (
+                username TEXT PRIMARY KEY,
+                password TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                display_name TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'سلام، من در گپینو هستم',
+                avatar TEXT NOT NULL DEFAULT ''
             )
         """)
 
+
         conn.execute("""
-            create index if not exists idx_file_blobs_owner
-            on public.file_blobs(owner)
+            ALTER TABLE public.users
+            ADD COLUMN IF NOT EXISTS display_name TEXT
         """)
 
         conn.execute("""
-            create table if not exists public.messages (
-                id text primary key,
-                sender text not null,
-                receiver text not null,
-                text text not null,
-                created_at text not null
+            ALTER TABLE public.users
+            ADD COLUMN IF NOT EXISTS status TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE public.users
+            ADD COLUMN IF NOT EXISTS avatar TEXT
+        """)
+
+
+        conn.execute("""
+            UPDATE public.users
+            SET display_name=username
+            WHERE display_name IS NULL OR display_name=''
+        """)
+
+
+        conn.execute("""
+            UPDATE public.users
+            SET status='سلام، من در گپینو هستم'
+            WHERE status IS NULL OR status=''
+        """)
+
+
+        conn.execute("""
+            UPDATE public.users
+            SET avatar=''
+            WHERE avatar IS NULL
+        """)
+
+
+
+        # پیام‌ها
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS public.messages (
+
+                id TEXT PRIMARY KEY,
+
+                sender TEXT NOT NULL,
+
+                receiver TEXT NOT NULL,
+
+                text TEXT NOT NULL,
+
+                created_at TEXT NOT NULL
+
             )
         """)
-        conn.execute("""
-            alter table public.messages add column if not exists file_id text
-        """)
-        conn.execute("""
-            alter table public.messages add column if not exists file_name text
-        """)
-        conn.execute("""
-            alter table public.messages add column if not exists file_type text
-        """)
-        conn.execute("""
-            alter table public.messages add column if not exists file_url text
-        """)
-        conn.execute("""
-            alter table public.messages add column if not exists file_size bigint
-        """)
+
 
         conn.execute("""
-            create index if not exists idx_messages_pair_time
-            on public.messages(sender, receiver, created_at)
-        """)
-        conn.execute("""
-            create index if not exists idx_messages_created_at
-            on public.messages(created_at)
+            ALTER TABLE public.messages
+            ADD COLUMN IF NOT EXISTS file_id TEXT
         """)
 
 
+        conn.execute("""
+            ALTER TABLE public.messages
+            ADD COLUMN IF NOT EXISTS file_name TEXT
+        """)
+
+
+        conn.execute("""
+            ALTER TABLE public.messages
+            ADD COLUMN IF NOT EXISTS file_type TEXT
+        """)
+
+
+        conn.execute("""
+            ALTER TABLE public.messages
+            ADD COLUMN IF NOT EXISTS file_url TEXT
+        """)
+
+
+        conn.execute("""
+            ALTER TABLE public.messages
+            ADD COLUMN IF NOT EXISTS file_size BIGINT
+        """)
+
+
+
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_pair_time
+
+            ON public.messages(sender,receiver,created_at)
+
+        """)
+
+
+
+        # فایل‌های دائمی
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS public.file_blobs (
+
+                id TEXT PRIMARY KEY,
+
+                owner TEXT NOT NULL,
+
+                kind TEXT NOT NULL,
+
+                original_name TEXT NOT NULL,
+
+                content_type TEXT NOT NULL,
+
+                size_bytes BIGINT NOT NULL,
+
+                data BYTEA NOT NULL,
+
+                created_at TIMESTAMPTZ DEFAULT now()
+
+            )
+        """)
+
+
+
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_file_blobs_owner
+
+            ON public.file_blobs(owner)
+
+        """)
+
+
+
+
+        # پخش زنده گپینو
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS public.live_streams (
+
+                id TEXT PRIMARY KEY,
+
+                host TEXT NOT NULL,
+
+                title TEXT NOT NULL,
+
+                description TEXT NOT NULL DEFAULT '',
+
+                status TEXT NOT NULL DEFAULT 'offline',
+
+                viewers INTEGER NOT NULL DEFAULT 0,
+
+                created_at TIMESTAMPTZ DEFAULT now()
+
+            )
+        """)
+
+
+
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_live_streams_status
+
+            ON public.live_streams(status)
+
+        """)
+
+
+
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_live_streams_host
+
+            ON public.live_streams(host)
+
+        """)
+
+
+
+
+        # بینندگان لایو
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS public.live_viewers (
+
+                id TEXT PRIMARY KEY,
+
+                stream_id TEXT NOT NULL,
+
+                username TEXT NOT NULL,
+
+                joined_at TIMESTAMPTZ DEFAULT now()
+
+            )
+        """)
+
+
+
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_live_viewers_stream
+
+            ON public.live_viewers(stream_id)
+
+        """)
 def _user_from_row(row: Optional[dict]) -> Optional[dict]:
+
     if not row:
         return None
+
     return {
         "username": row["username"],
         "password": row["password"],
-        "created_at": row["created_at"],
+        "created_at": str(row["created_at"]),
         "profile": {
             "display_name": row.get("display_name") or row["username"],
             "status": row.get("status") or "سلام، من در گپینو هستم",
             "avatar": row.get("avatar") or "",
-        },
+        }
     }
 
 
-def db_get_user(username: str) -> Optional[dict]:
-    with get_conn() as conn:
-        row = conn.execute(
-            "select username,password,created_at,display_name,status,avatar from public.users where username=%s",
-            (username,),
-        ).fetchone()
-    return _user_from_row(row)
 
+def db_get_user(username: str):
 
-def db_list_users() -> list[dict]:
-    with get_conn() as conn:
-        rows = conn.execute(
-            "select username,password,created_at,display_name,status,avatar from public.users order by created_at, username"
-        ).fetchall()
-    return [_user_from_row(row) for row in rows]
-
-
-def db_upsert_user(user: dict) -> dict:
-    profile = user.get("profile") if isinstance(user.get("profile"), dict) else {}
-    username = str(user.get("username", "")).strip()
-    if not username:
-        raise ValueError("username is required")
-    payload = {
-        "username": username,
-        "password": str(user.get("password", "")),
-        "created_at": str(user.get("created_at") or datetime.now(timezone.utc).isoformat()),
-        "display_name": str(profile.get("display_name") or username),
-        "status": str(profile.get("status") or "سلام، من در گپینو هستم"),
-        "avatar": str(profile.get("avatar") or ""),
-    }
-    with get_conn() as conn:
-        row = conn.execute("""
-            insert into public.users (username,password,created_at,display_name,status,avatar)
-            values (%(username)s,%(password)s,%(created_at)s,%(display_name)s,%(status)s,%(avatar)s)
-            on conflict (username) do update set
-                password=excluded.password,
-                created_at=excluded.created_at,
-                display_name=excluded.display_name,
-                status=excluded.status,
-                avatar=excluded.avatar
-            returning username,password,created_at,display_name,status,avatar
-        """, payload).fetchone()
-    return _user_from_row(row)
-
-
-def db_update_user(username: str, *, status: Optional[str] = None, profile: Optional[dict] = None) -> Optional[dict]:
-    current = db_get_user(username)
-    if not current:
-        return None
-    if profile is not None:
-        current["profile"] = profile
-    if status is not None:
-        current["profile"]["status"] = status
-    return db_upsert_user(current)
-
-
-def db_get_messages(user1: Optional[str] = None, user2: Optional[str] = None) -> list[dict]:
-    with get_conn() as conn:
-        if user1 is not None and user2 is not None:
-            rows = conn.execute("""
-                select id,sender,receiver,text,created_at,file_id,file_name,file_type,file_url,file_size
-                from public.messages
-                where (sender=%s and receiver=%s) or (sender=%s and receiver=%s)
-                order by created_at asc
-            """, (user1, user2, user2, user1)).fetchall()
-        else:
-            rows = conn.execute("""
-                select id,sender,receiver,text,created_at,file_id,file_name,file_type,file_url,file_size
-                from public.messages
-                order by created_at asc
-            """).fetchall()
-    return [dict(row) for row in rows]
-
-
-def db_insert_message(message: dict) -> dict:
-    payload = {
-        "id": str(message["id"]),
-        "sender": str(message["sender"]),
-        "receiver": str(message["receiver"]),
-        "text": str(message.get("text", "")),
-        "created_at": str(message["created_at"]),
-        "file_id": message.get("file_id"),
-        "file_name": message.get("file_name"),
-        "file_type": message.get("file_type"),
-        "file_url": message.get("file_url"),
-        "file_size": message.get("file_size"),
-    }
-    with get_conn() as conn:
-        row = conn.execute("""
-            insert into public.messages (id,sender,receiver,text,created_at,file_id,file_name,file_type,file_url,file_size)
-            values (%(id)s,%(sender)s,%(receiver)s,%(text)s,%(created_at)s,%(file_id)s,%(file_name)s,%(file_type)s,%(file_url)s,%(file_size)s)
-            on conflict (id) do nothing
-            returning id,sender,receiver,text,created_at,file_id,file_name,file_type,file_url,file_size
-        """, payload).fetchone()
-    return dict(row) if row else payload
-
-
-def migrate_json_to_database(users_file: Path, messages_file: Path) -> None:
-    if not DATABASE_ENABLED:
-        return
-
-    def read_json(path: Path, default):
-        try:
-            with path.open("r", encoding="utf-8") as f:
-                value = json.load(f)
-            return value if isinstance(value, type(default)) else default
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            return default
-
-    users = read_json(users_file, [])
-    messages = read_json(messages_file, [])
-
-    if users:
-        for user in users:
-            if isinstance(user, dict) and user.get("username"):
-                # Preserve old JSON records while making them DB-backed.
-                db_upsert_user(user)
-
-    if messages:
-        for message in messages:
-            if not isinstance(message, dict):
-                continue
-            if all(message.get(k) for k in ("id", "sender", "receiver", "text", "created_at")):
-                db_insert_message(message)
-
-
-def db_store_file(owner: str, kind: str, original_name: str, content_type: str, data: bytes) -> str:
     init_database()
-    import secrets
-    file_id = secrets.token_hex(20)
+
     with get_conn() as conn:
+
+        row = conn.execute(
+            """
+            SELECT
+                username,
+                password,
+                created_at,
+                display_name,
+                status,
+                avatar
+            FROM public.users
+            WHERE username=%s
+            """,
+            (username,)
+        ).fetchone()
+
+    return _user_from_row(row)
+
+
+
+def db_list_users():
+
+    init_database()
+
+    with get_conn() as conn:
+
+        rows = conn.execute(
+            """
+            SELECT
+                username,
+                password,
+                created_at,
+                display_name,
+                status,
+                avatar
+            FROM public.users
+            ORDER BY created_at,username
+            """
+        ).fetchall()
+
+
+    return [
+        _user_from_row(row)
+        for row in rows
+    ]
+
+
+
+def db_upsert_user(user: dict):
+
+    init_database()
+
+    profile = user.get("profile", {})
+
+
+    data = {
+
+        "username": user["username"],
+
+        "password": user["password"],
+
+        "created_at": str(
+            user.get("created_at")
+            or datetime.now(timezone.utc).isoformat()
+        ),
+
+        "display_name": profile.get(
+            "display_name",
+            user["username"]
+        ),
+
+        "status": profile.get(
+            "status",
+            "سلام، من در گپینو هستم"
+        ),
+
+        "avatar": profile.get(
+            "avatar",
+            ""
+        )
+    }
+
+
+
+    with get_conn() as conn:
+
+        row = conn.execute(
+            """
+            INSERT INTO public.users
+            (
+                username,
+                password,
+                created_at,
+                display_name,
+                status,
+                avatar
+            )
+            VALUES
+            (
+                %(username)s,
+                %(password)s,
+                %(created_at)s,
+                %(display_name)s,
+                %(status)s,
+                %(avatar)s
+            )
+
+            ON CONFLICT(username)
+            DO UPDATE SET
+
+                password=EXCLUDED.password,
+
+                display_name=EXCLUDED.display_name,
+
+                status=EXCLUDED.status,
+
+                avatar=EXCLUDED.avatar
+
+            RETURNING *
+            """,
+            data
+        ).fetchone()
+
+
+    return _user_from_row(row)
+
+
+
+
+# ======================
+# پیام‌ها
+# ======================
+
+
+def db_get_messages(user1=None,user2=None):
+
+    init_database()
+
+
+    with get_conn() as conn:
+
+        if user1 and user2:
+
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM public.messages
+
+                WHERE
+                (sender=%s AND receiver=%s)
+
+                OR
+
+                (sender=%s AND receiver=%s)
+
+                ORDER BY created_at ASC
+                """,
+                (
+                    user1,
+                    user2,
+                    user2,
+                    user1
+                )
+            ).fetchall()
+
+        else:
+
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM public.messages
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+
+
+
+def db_insert_message(message: dict):
+
+    init_database()
+
+
+    with get_conn() as conn:
+
+        row = conn.execute(
+            """
+            INSERT INTO public.messages
+            (
+                id,
+                sender,
+                receiver,
+                text,
+                created_at,
+                file_id,
+                file_name,
+                file_type,
+                file_url,
+                file_size
+            )
+
+            VALUES
+
+            (
+                %(id)s,
+                %(sender)s,
+                %(receiver)s,
+                %(text)s,
+                %(created_at)s,
+                %(file_id)s,
+                %(file_name)s,
+                %(file_type)s,
+                %(file_url)s,
+                %(file_size)s
+            )
+
+            ON CONFLICT(id)
+            DO NOTHING
+
+            RETURNING *
+            """,
+            message
+        ).fetchone()
+
+
+    return dict(row) if row else message
+
+
+
+
+# ======================
+# فایل دائمی
+# ======================
+
+
+def db_store_file(
+    owner,
+    kind,
+    original_name,
+    content_type,
+    data
+):
+
+    init_database()
+
+    import secrets
+
+    file_id = secrets.token_hex(20)
+
+
+    with get_conn() as conn:
+
         conn.execute(
             """
             INSERT INTO public.file_blobs
-                (id, owner, kind, original_name, content_type, size_bytes, data)
+            (
+                id,
+                owner,
+                kind,
+                original_name,
+                content_type,
+                size_bytes,
+                data
+            )
+
             VALUES
-                (%s, %s, %s, %s, %s, %s, %s)
+            (
+                %s,%s,%s,%s,%s,%s,%s
+            )
             """,
             (
                 file_id,
-                str(owner),
-                str(kind),
-                str(original_name),
-                str(content_type),
+                owner,
+                kind,
+                original_name,
+                content_type,
                 len(data),
-                data,
-            ),
+                data
+            )
         )
+
+
     return file_id
 
 
-def db_get_file(file_id: str) -> Optional[dict]:
+
+
+def db_get_file(file_id):
+
     init_database()
+
     with get_conn() as conn:
+
         row = conn.execute(
             """
-            SELECT id, owner, kind, original_name, content_type, size_bytes, data, created_at
+            SELECT *
             FROM public.file_blobs
-            WHERE id = %s
+            WHERE id=%s
             """,
-            (str(file_id),),
+            (file_id,)
         ).fetchone()
+
+
     return dict(row) if row else None
 
 
-def db_delete_file(file_id: str) -> None:
-    if not DATABASE_ENABLED or not file_id:
-        return
+
+
+# ======================
+# پخش زنده گپینو
+# ======================
+
+
+def db_create_live(host,title,description=""):
+
+    init_database()
+
+    import secrets
+
+    live_id = secrets.token_hex(12)
+
+
     with get_conn() as conn:
+
+        row = conn.execute(
+            """
+            INSERT INTO public.live_streams
+            (
+                id,
+                host,
+                title,
+                description,
+                status
+            )
+
+            VALUES
+            (
+                %s,%s,%s,%s,'online'
+            )
+
+            RETURNING *
+            """,
+            (
+                live_id,
+                host,
+                title,
+                description
+            )
+        ).fetchone()
+
+
+    return dict(row)
+
+
+
+
+def db_list_live():
+
+    init_database()
+
+    with get_conn() as conn:
+
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM public.live_streams
+            WHERE status='online'
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+
+
+def db_stop_live(stream_id):
+
+    init_database()
+
+    with get_conn() as conn:
+
         conn.execute(
-            "DELETE FROM public.file_blobs WHERE id = %s",
-            (str(file_id),),
+            """
+            UPDATE public.live_streams
+
+            SET status='offline'
+
+            WHERE id=%s
+            """,
+            (stream_id,)
+        )
+
+
+
+
+def db_join_live(stream_id,username):
+
+    init_database()
+
+    import secrets
+
+    viewer_id = secrets.token_hex(12)
+
+
+    with get_conn() as conn:
+
+        conn.execute(
+            """
+            INSERT INTO public.live_viewers
+            (
+                id,
+                stream_id,
+                username
+            )
+
+            VALUES
+            (
+                %s,%s,%s
+            )
+            """,
+            (
+                viewer_id,
+                stream_id,
+                username
+            )
+        )
+
+
+        conn.execute(
+            """
+            UPDATE public.live_streams
+
+            SET viewers=viewers+1
+
+            WHERE id=%s
+            """,
+            (stream_id,)
+        )
+
+
+
+
+def db_leave_live(stream_id,username):
+
+    init_database()
+
+    with get_conn() as conn:
+
+        conn.execute(
+            """
+            DELETE FROM public.live_viewers
+
+            WHERE
+            stream_id=%s
+
+            AND
+
+            username=%s
+            """,
+            (
+                stream_id,
+                username
+            )
+        )
+
+
+        conn.execute(
+            """
+            UPDATE public.live_streams
+
+            SET viewers=
+            CASE
+                WHEN viewers>0 THEN viewers-1
+                ELSE 0
+            END
+
+            WHERE id=%s
+            """,
+            (stream_id,)
         )
