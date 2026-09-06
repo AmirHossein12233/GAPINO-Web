@@ -37,6 +37,7 @@ AVATARS_DIR.mkdir(parents=True, exist_ok=True)
 
 SESSION_SECRET = os.getenv("GAPINO_SESSION_SECRET", "change-this-secret-before-production")
 MAX_AVATAR_SIZE = 5 * 1024 * 1024
+MAX_CHAT_FILE_SIZE = 50 * 1024 * 1024
 ALLOWED_AVATAR_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -231,7 +232,7 @@ HTML = r'''<!DOCTYPE html>
 .btn{width:100%;padding:13px;border-radius:12px;font-weight:800;font-size:15px}.primary{background:#2563eb;color:#fff;border:0}.secondary{margin-top:10px;background:transparent;color:#fff;border:1px solid #394556}.error{text-align:center;min-height:22px;margin-top:10px;color:#ff7f92;font-size:13px}
 .app{height:100vh;display:flex;overflow:hidden}.sidebar{width:340px;flex:none;background:#151d26;border-left:1px solid #2a3542;display:flex;flex-direction:column}.side-head{padding:18px;border-bottom:1px solid #2a3542}.side-logo{font-size:26px;font-weight:900}.me{font-size:13px;color:#8f9bab;margin-top:4px}.search{width:100%;margin-top:14px;padding:11px 12px;border-radius:11px;border:1px solid #344151;background:#0d131a;color:#fff;outline:none}.side-buttons{display:flex;gap:8px;margin-top:10px}.side-action{flex:1;padding:10px;border-radius:10px;border:1px solid #394657;background:transparent;color:#fff}.side-action:hover,.logout:hover{background:#202936}.logout{margin-top:8px;width:100%;padding:10px;border-radius:10px;border:1px solid #394657;background:transparent;color:#fff}.users{flex:1;overflow:auto}
 .user{display:flex;gap:12px;align-items:center;padding:13px 15px;border-bottom:1px solid rgba(255,255,255,.03);cursor:pointer}.user:hover,.user.active{background:#202b38}.avatar{width:46px;height:46px;min-width:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#2563eb;font-weight:900;overflow:hidden}.avatar img{width:100%;height:100%;object-fit:cover}.uinfo{min-width:0;flex:1}.uname{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ustatus{font-size:12px;color:#788596;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ustatus.online{color:#50d58e}
-.chat{min-width:0;flex:1;height:100vh;display:flex;flex-direction:column}.chat-head{height:70px;min-height:70px;display:flex;align-items:center;padding:0 18px;background:#151d26;border-bottom:1px solid #2a3542}.menu{display:none;margin-left:8px;border:0;background:transparent;color:#fff;font-size:22px}.chat-name{font-size:18px;font-weight:800}.chat-status{font-size:12px;color:#7f8b9b;margin-top:3px}.messages{flex:1;overflow:auto;padding:20px;display:flex;flex-direction:column;gap:9px}.empty{height:100%;display:flex;align-items:center;justify-content:center;color:#728091;text-align:center}.msg{max-width:min(75%,650px);padding:9px 12px;border-radius:15px;line-height:1.8;font-size:14px;word-break:break-word}.mine{align-self:flex-start;background:#2563eb;border-bottom-left-radius:5px}.theirs{align-self:flex-end;background:#222d39;border-bottom-right-radius:5px}.time{display:block;font-size:9px;opacity:.65;margin-top:3px}.typing{min-height:24px;padding:0 18px;color:#788697;font-size:12px}.composer{display:flex;gap:9px;padding:12px;border-top:1px solid #2a3542;background:#151d26}.message-input{flex:1;min-width:0;padding:12px 13px;border-radius:12px;border:1px solid #364253;background:#0d131a;color:#fff;outline:none}.send{width:52px;border:0;border-radius:12px;background:#2563eb;color:#fff;font-size:18px}
+.chat{min-width:0;flex:1;height:100vh;display:flex;flex-direction:column}.chat-head{height:70px;min-height:70px;display:flex;align-items:center;padding:0 18px;background:#151d26;border-bottom:1px solid #2a3542}.menu{display:none;margin-left:8px;border:0;background:transparent;color:#fff;font-size:22px}.chat-name{font-size:18px;font-weight:800}.chat-status{font-size:12px;color:#7f8b9b;margin-top:3px}.messages{flex:1;overflow:auto;padding:20px;display:flex;flex-direction:column;gap:9px}.empty{height:100%;display:flex;align-items:center;justify-content:center;color:#728091;text-align:center}.msg{max-width:min(75%,650px);padding:9px 12px;border-radius:15px;line-height:1.8;font-size:14px;word-break:break-word}.mine{align-self:flex-start;background:#2563eb;border-bottom-left-radius:5px}.theirs{align-self:flex-end;background:#222d39;border-bottom-right-radius:5px}.file-link{display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:10px;text-decoration:none;color:#fff;background:rgba(255,255,255,.08)}.file-link img,.file-link video{display:block;max-width:280px;max-height:220px;border-radius:8px}.file-name{font-size:13px;font-weight:700}.file-meta{font-size:10px;opacity:.7}.time{display:block;font-size:9px;opacity:.65;margin-top:3px}.typing{min-height:24px;padding:0 18px;color:#788697;font-size:12px}.composer{display:flex;gap:9px;padding:12px;border-top:1px solid #2a3542;background:#151d26}.message-input{flex:1;min-width:0;padding:12px 13px;border-radius:12px;border:1px solid #364253;background:#0d131a;color:#fff;outline:none}.send{width:52px;border:0;border-radius:12px;background:#2563eb;color:#fff;font-size:18px}
 .modal-backdrop{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.68)}.modal{width:100%;max-width:460px;max-height:92vh;overflow:auto;background:#171f29;border:1px solid #324051;border-radius:20px;padding:22px;box-shadow:0 25px 70px rgba(0,0,0,.5)}.modal h2{margin:0 0 18px}.modal label{display:block;margin:12px 0 6px;color:#a8b3c2;font-size:13px}.modal input,.modal textarea{width:100%;padding:12px;border-radius:11px;border:1px solid #354253;background:#0d131a;color:#fff;outline:none}.modal textarea{min-height:90px;resize:vertical}.modal-actions{display:flex;gap:8px;margin-top:16px}.modal-actions button{flex:1;padding:12px;border-radius:11px}.avatar-preview{width:100px;height:100px;margin:0 auto 12px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#2563eb;font-size:32px;font-weight:900;overflow:hidden}.avatar-preview img{width:100%;height:100%;object-fit:cover}.profile-hint{color:#7f8c9c;font-size:11px;line-height:1.6;text-align:center;margin-bottom:10px}.file-button{width:100%;display:flex;align-items:center;justify-content:center;padding:12px;border-radius:11px;background:#202b38;border:1px solid #394657;color:#fff;font-weight:700;cursor:pointer}.file-button:hover{background:#273444}.file-name{text-align:center;color:#8995a5;font-size:11px;margin-top:7px;min-height:18px}.remove-avatar{width:100%;margin-top:8px;padding:10px;border-radius:10px;background:transparent;border:1px solid #55343b;color:#ff9aaa;cursor:pointer}.remove-avatar:hover{background:#2b1e23}
 @media(max-width:800px){.sidebar{position:absolute;z-index:20;top:0;right:0;bottom:0;width:100%;max-width:390px}.sidebar.closed{display:none}.menu{display:block}.msg{max-width:88%}.side-buttons{display:grid;grid-template-columns:1fr 1fr}}
 </style>
@@ -260,7 +261,7 @@ HTML = r'''<!DOCTYPE html>
 <div id="users" class="users"></div></aside>
 <main class="chat"><div class="chat-head"><button class="menu" onclick="toggleSidebar()">☰</button><div><div id="chatName" class="chat-name">گفت‌وگو</div><div id="chatStatus" class="chat-status"></div></div></div>
 <div id="messages" class="messages"><div class="empty">یک کاربر را از فهرست انتخاب کنید</div></div><div id="typing" class="typing"></div>
-<div class="composer"><input id="messageInput" class="message-input" placeholder="پیام خود را بنویسید..." oninput="sendTyping()" onkeydown="messageKey(event)"><button class="send" onclick="sendMessage()">➤</button></div></main></div>
+<div class="composer"><input id="messageInput" class="message-input" placeholder="پیام خود را بنویسید..." oninput="sendTyping()" onkeydown="messageKey(event)"><input id="chatFileInput" type="file" class="hidden" onchange="handleChatFile(event)" accept="image/*,video/*,.pdf,.zip,.rar,.txt,.doc,.docx,.xls,.xlsx"><button class="send" type="button" onclick="document.getElementById('chatFileInput').click()">📎</button><button class="send" type="button" onclick="sendMessage()">➤</button></div></main></div>
 <div id="profileModal" class="modal-backdrop hidden"><div class="modal"><h2>پروفایل من</h2>
 <div id="profileAvatar" class="avatar-preview">؟</div><div class="profile-hint">عکس را از دستگاهت انتخاب کن. حداکثر ۵ مگابایت.</div>
 <label class="file-button" for="profileAvatarFile">📷 انتخاب عکس</label>
@@ -299,10 +300,12 @@ function updateStatuses(){for(const user of users){const el=document.getElementB
 function updateChatStatus(){const el=document.getElementById("chatStatus");if(!selected){el.textContent="";return}const online=window.onlineUsers.includes(selected.username);el.textContent=online?"آنلاین":(userStatus(selected)||"آفلاین")}
 async function loadConversation(){if(!selected)return;try{const data=await api("/messages/"+encodeURIComponent(selected.username));renderMessages(data.messages||[])}catch(e){console.error(e)}}
 function renderMessages(list){const box=document.getElementById("messages");box.innerHTML="";if(!list.length){box.innerHTML='<div class="empty">هنوز پیامی در این گفت‌وگو وجود ندارد.<br>اولین پیام را بفرستید.</div>';return}for(const message of list)addMessage(message,false);scrollMessages()}
-function addMessage(message,scroll=true){const box=document.getElementById("messages");const empty=box.querySelector(".empty");if(empty)empty.remove();const el=document.createElement("div");el.className="msg "+(message.sender===me.username?"mine":"theirs");el.innerHTML='<span>'+esc(message.text)+'</span><span class="time">'+esc(message.created_at)+'</span>';box.appendChild(el);if(scroll)scrollMessages()}
+function formatSize(size){const n=Number(size||0);if(n<1024)return n+" B";if(n<1024*1024)return (n/1024).toFixed(1)+" KB";if(n<1024*1024*1024)return (n/1024/1024).toFixed(1)+" MB";return (n/1024/1024/1024).toFixed(1)+" GB"}
+function addMessage(message,scroll=true){const box=document.getElementById("messages");const empty=box.querySelector(".empty");if(empty)empty.remove();const el=document.createElement("div");el.className="msg "+(message.sender===me.username?"mine":"theirs");let body="";if(message.file_url){const url=esc(message.file_url), name=esc(message.file_name||"فایل");const type=message.file_type||"";if(type.startsWith("image/")){body='<a class="file-link" href="'+url+'" target="_blank" rel="noopener"><img src="'+url+'" alt="'+name+'"><span class="file-name">'+name+'</span><span class="file-meta">'+formatSize(message.file_size)+'</span></a>'}else if(type.startsWith("video/")){body='<a class="file-link" href="'+url+'" target="_blank" rel="noopener"><video src="'+url+'" controls preload="metadata"></video><span class="file-name">'+name+'</span><span class="file-meta">'+formatSize(message.file_size)+'</span></a>'}else{body='<a class="file-link" href="'+url+'" target="_blank" rel="noopener"><span class="file-name">📎 '+name+'</span><span class="file-meta">'+formatSize(message.file_size)+'</span></a>'}}else{body='<span>'+esc(message.text)+'</span>'}el.innerHTML=body+'<span class="time">'+esc(message.created_at)+'</span>';box.appendChild(el);if(scroll)scrollMessages()}
 function scrollMessages(){const box=document.getElementById("messages");box.scrollTop=box.scrollHeight}
 function messageKey(event){if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();sendMessage()}}
 async function sendMessage(){if(!selected){alert("ابتدا یک کاربر را انتخاب کنید.");return}const input=document.getElementById("messageInput");const text=input.value.trim();if(!text)return;if(socket&&socket.readyState===WebSocket.OPEN){socket.send(JSON.stringify({type:"message",to:selected.username,text}));input.value="";return}try{const data=await api("/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({receiver:selected.username,text})});addMessage(data.message,true);input.value=""}catch(e){alert(e.message)}}
+async function handleChatFile(event){const file=event.target.files&&event.target.files[0];event.target.value="";if(!file||!selected)return;if(file.size>50*1024*1024){alert("حجم فایل نباید بیشتر از ۵۰ مگابایت باشد.");return}try{const form=new FormData();form.append("receiver",selected.username);form.append("file",file);const data=await api("/upload",{method:"POST",body:form});if(data.message&&selected&&((data.message.sender===me.username&&data.message.receiver===selected.username)||(data.message.sender===selected.username&&data.message.receiver===me.username)))addMessage(data.message,true)}catch(e){alert(e.message)}}
 function sendTyping(){if(!selected||!socket||socket.readyState!==WebSocket.OPEN)return;socket.send(JSON.stringify({type:"typing",to:selected.username,value:true}));clearTimeout(typingTimer);typingTimer=setTimeout(()=>{if(socket&&socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({type:"typing",to:selected.username,value:false}))},900)}
 function connectSocket(){if(!me)return;if(socket&&(socket.readyState===WebSocket.OPEN||socket.readyState===WebSocket.CONNECTING))return;const protocol=location.protocol==="https:"?"wss:":"ws:";socket=new WebSocket(protocol+"//"+location.host+"/ws");socket.onmessage=event=>{let data;try{data=JSON.parse(event.data)}catch(_){return}if(data.type==="online_users"){window.onlineUsers=data.users||[];updateStatuses();return}if(data.type==="typing"){if(selected&&data.from===selected.username)document.getElementById("typing").textContent=data.value?"در حال نوشتن...":"";return}if(data.type==="message"){const message=data.message;if(!message)return;if(selected&&((message.sender===me.username&&message.receiver===selected.username)||(message.sender===selected.username&&message.receiver===me.username)))addMessage(message,true);return}if(data.type==="error")console.error(data.message)};socket.onclose=()=>{if(me){clearTimeout(reconnectTimer);reconnectTimer=setTimeout(connectSocket,2000)}}}
 async function openProfile(){try{const data=await api("/profile");const p=data.profile||{};document.getElementById("profileDisplayName").value=p.display_name||me.username;document.getElementById("profileStatus").value=p.status||"";selectedAvatarFile=null;removeAvatarFlag=false;document.getElementById("profileAvatarFile").value="";document.getElementById("selectedFileName").textContent="";previewCurrentAvatar(p.avatar,p.display_name||me.username);profileErr("");document.getElementById("profileModal").classList.remove("hidden")}catch(e){alert(e.message)}}
@@ -607,6 +610,43 @@ async def upload_profile_avatar(request: Request, file: UploadFile = File(...)):
         "profile": updated["profile"],
         "user": updated,
     }
+
+
+@app.post("/upload")
+async def upload_chat_file(request: Request, receiver: str = Form(...), file: UploadFile = File(...)):
+    current = get_current_user(request)
+    if not current:
+        raise HTTPException(401, "ابتدا وارد حساب شوید.")
+    receiver = receiver.strip()
+    if not receiver or find_user(receiver) is None:
+        raise HTTPException(404, "گیرنده پیدا نشد.")
+    content_type = (file.content_type or "application/octet-stream").strip().lower()
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "فایل خالی است.")
+    if len(content) > MAX_CHAT_FILE_SIZE:
+        raise HTTPException(400, "حجم فایل نباید بیشتر از ۵۰ مگابایت باشد.")
+    original_name = Path(file.filename or "file").name or "file"
+    file_id = db_store_file(current["username"], "chat", original_name, content_type, content) if DATABASE_ENABLED else ""
+    if not file_id:
+        raise HTTPException(500, "ذخیره فایل نیاز به DATABASE_URL دارد.")
+    message = {
+        "id": secrets.token_hex(12),
+        "sender": current["username"],
+        "receiver": receiver,
+        "text": "",
+        "created_at": now_text(),
+        "file_id": file_id,
+        "file_name": original_name,
+        "file_type": content_type,
+        "file_url": "/files/" + file_id,
+        "file_size": len(content),
+    }
+    db_insert_message(message)
+    payload = {"type": "message", "message": message}
+    await send_to_user(receiver, payload)
+    await send_to_user(current["username"], payload)
+    return {"ok": True, "message": message}
 
 
 @app.get("/messages/{username}")

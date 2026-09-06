@@ -103,6 +103,22 @@ def init_database() -> None:
             )
         """)
         conn.execute("""
+            alter table public.messages add column if not exists file_id text
+        """)
+        conn.execute("""
+            alter table public.messages add column if not exists file_name text
+        """)
+        conn.execute("""
+            alter table public.messages add column if not exists file_type text
+        """)
+        conn.execute("""
+            alter table public.messages add column if not exists file_url text
+        """)
+        conn.execute("""
+            alter table public.messages add column if not exists file_size bigint
+        """)
+
+        conn.execute("""
             create index if not exists idx_messages_pair_time
             on public.messages(sender, receiver, created_at)
         """)
@@ -187,14 +203,14 @@ def db_get_messages(user1: Optional[str] = None, user2: Optional[str] = None) ->
     with get_conn() as conn:
         if user1 is not None and user2 is not None:
             rows = conn.execute("""
-                select id,sender,receiver,text,created_at
+                select id,sender,receiver,text,created_at,file_id,file_name,file_type,file_url,file_size
                 from public.messages
                 where (sender=%s and receiver=%s) or (sender=%s and receiver=%s)
                 order by created_at asc
             """, (user1, user2, user2, user1)).fetchall()
         else:
             rows = conn.execute("""
-                select id,sender,receiver,text,created_at
+                select id,sender,receiver,text,created_at,file_id,file_name,file_type,file_url,file_size
                 from public.messages
                 order by created_at asc
             """).fetchall()
@@ -206,15 +222,20 @@ def db_insert_message(message: dict) -> dict:
         "id": str(message["id"]),
         "sender": str(message["sender"]),
         "receiver": str(message["receiver"]),
-        "text": str(message["text"]),
+        "text": str(message.get("text", "")),
         "created_at": str(message["created_at"]),
+        "file_id": message.get("file_id"),
+        "file_name": message.get("file_name"),
+        "file_type": message.get("file_type"),
+        "file_url": message.get("file_url"),
+        "file_size": message.get("file_size"),
     }
     with get_conn() as conn:
         row = conn.execute("""
-            insert into public.messages (id,sender,receiver,text,created_at)
-            values (%(id)s,%(sender)s,%(receiver)s,%(text)s,%(created_at)s)
+            insert into public.messages (id,sender,receiver,text,created_at,file_id,file_name,file_type,file_url,file_size)
+            values (%(id)s,%(sender)s,%(receiver)s,%(text)s,%(created_at)s,%(file_id)s,%(file_name)s,%(file_type)s,%(file_url)s,%(file_size)s)
             on conflict (id) do nothing
-            returning id,sender,receiver,text,created_at
+            returning id,sender,receiver,text,created_at,file_id,file_name,file_type,file_url,file_size
         """, payload).fetchone()
     return dict(row) if row else payload
 
